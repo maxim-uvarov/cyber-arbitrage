@@ -28,14 +28,6 @@ TOKENS_TO_CONVERT = {
 }  # tokens to divide by 1000
 
 
-# {
-
-#     "hydrogen": "HYDROGEN",
-#     "tocyb": "TOCYB",
-#     "boot": "BOOT",
-# }
-
-
 def rename_denom(denom: str, ibc_coin_names: dict = IBC_COIN_NAMES) -> str:
     return ibc_coin_names[denom] if denom in ibc_coin_names.keys() else denom
 
@@ -87,7 +79,7 @@ pools_df[["coin_1", "coin_2"]] = pools_df["reserve_coin_denoms"].apply(
 
 pools_df = pd.DataFrame.merge(
     pools_df,
-    supply_bostrom_df["pool_tokens_amount"],
+    supply_bostrom_df,
     left_index=True,
     right_index=True,
 )
@@ -125,16 +117,6 @@ prices_df["price_in_tocyb"] = prices_df["price_in_h"] / h_in_tocyb  # type: igno
 prices_df.drop(columns=["coin_1_amount", "coin_2_amount", "price_in_h"], inplace=True)
 
 
-# %%
-pools_df = pd.DataFrame.merge(pools_df, prices_df, left_on="coin_1", right_index=True)
-pools_df["coin_1_amount_tocyb"] = pools_df["coin_1_amount"] * pools_df["price_in_tocyb"]
-pools_df.drop(columns=["price_in_tocyb"], inplace=True)
-pools_df = pd.DataFrame.merge(pools_df, prices_df, left_on="coin_2", right_index=True)
-pools_df["coin_2_amount_tocyb"] = pools_df["coin_2_amount"] * pools_df["price_in_tocyb"]
-pools_df.drop(columns=["price_in_tocyb"], inplace=True)
-pools_df["pool_value_in_tocyb"] = (
-    pools_df["coin_1_amount_tocyb"] + pools_df["coin_2_amount_tocyb"]
-)
 # %%
 def get_delegations(address: str):
     delegations = pd.DataFrame.from_records(
@@ -210,30 +192,23 @@ pool_tokens = pd.concat([pool_tokens, rewards_pools_df])
 
 pool_tokens = pool_tokens.join(pools_df)
 # %%
-pool_tokens["coin_1_deposit"] = (
-    pool_tokens["amount"].astype("int64")
+pool_tokens["coin_1_amount_to_withdraw"] = (
+    pool_tokens["amount"]
     / pool_tokens["pool_tokens_amount"]
     * pool_tokens["coin_1_amount"]
 )
-pool_tokens["coin_2_deposit"] = (
-    pool_tokens["amount"].astype("int64")
+pool_tokens["coin_2_amount_to_withdraw"] = (
+    pool_tokens["amount"]
     / pool_tokens["pool_tokens_amount"]
     * pool_tokens["coin_2_amount"]
 )
-pool_tokens["pool_deposit_tocyb"] = (
-    pool_tokens["amount"].astype("int64")
-    / pool_tokens["pool_tokens_amount"]
-    * pool_tokens["pool_value_in_tocyb"]
-)
-
-# pool_tokens["state"] = pool_tokens["coin_1"] + "-" + pool_tokens["coin_2"]
 
 
 # %%
 def pool_tokens_pivot_longer(pool_tokens):
-    df1 = pool_tokens[["coin_1", "coin_1_deposit", "address", "state"]]
+    df1 = pool_tokens[["coin_1", "coin_1_amount_to_withdraw", "address", "state"]]
     df1.columns = ["denom", "amount", "address", "state"]
-    df2 = pool_tokens[["coin_2", "coin_2_deposit", "address", "state"]]
+    df2 = pool_tokens[["coin_2", "coin_2_amount_to_withdraw", "address", "state"]]
     df2.columns = ["denom", "amount", "address", "state"]
 
     tokens_in_pools_df = pd.concat([df1, df2]).reset_index(drop=True)
@@ -334,8 +309,6 @@ total_df = total_df[
     ["address_label", "denom", "state", "amount", "amount_in_tocyb", "address"]
 ]
 # total_df.to_clipboard()
-
-# total_df.style.format(thousands=",", precision=0)
 
 pd.set_option("display.max_colwidth", None)
 pd.options.display.float_format = "{0:7,.0f}".format
