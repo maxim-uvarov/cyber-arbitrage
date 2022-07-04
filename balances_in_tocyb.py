@@ -15,9 +15,9 @@ BOSTROM_POOLS_BASH_QUERY = (
 )
 
 ADDRESSES_DICT = {
-    "bostrom1s4czxghmh29aw2ldynk8r9lnkfccw5ph8rjpxa": "1",
+    # "bostrom1s4czxghmh29aw2ldynk8r9lnkfccw5ph8rjpxa": "1",
     # "bostrom1dxpm2ne0jflzr2hy9j5has6u2dvfv68calunqy": "2",
-    # "bostrom1nngr5aj3gcvphlhnvtqth8k3sl4asq3n6r76m8": "3",
+    "bostrom1nngr5aj3gcvphlhnvtqth8k3sl4asq3n6r76m8": "3",
 }
 
 TOKENS_TO_CONVERT = {
@@ -164,6 +164,29 @@ delegations_df = pd.concat(
 
 
 # %%
+def get_rewards(address: str):
+    rewards = get_json_from_bash_query(
+        f"cyber query distribution rewards {address} --chain-id bostrom --node https://rpc.bostrom.cybernode.ai:443 -o json"
+    )["total"]
+    rewards_df = pd.DataFrame.from_records(rewards)
+    rewards_df["amount"] = rewards_df["amount"].astype("float_").astype("int64")
+    rewards_df["address"] = address
+
+    rewards_df = rewards_df[rewards_df["amount"] != 0]
+
+    return rewards_df
+
+
+rewards_df = pd.concat([get_rewards(address) for address in ADDRESSES_DICT.keys()])
+
+rewards_pools_df = rewards_df[rewards_df["denom"].str.startswith("pool")].set_index(
+    "denom"
+)
+rewards_pools_df["storage"] = "pool-rewards"
+
+rewards_staking_df = rewards_df[~rewards_df["denom"].str.startswith("pool")]
+
+rewards_staking_df["storage"] = "rewards"
 
 
 def get_balance(address: str):
@@ -182,6 +205,10 @@ balance_df = pd.concat([get_balance(address) for address in ADDRESSES_DICT.keys(
 
 # %%
 pool_tokens = balance_df.loc[balance_df.index.str.startswith("pool")]
+pool_tokens["storage"] = "pool"
+
+pool_tokens = pd.concat([pool_tokens, rewards_pools_df])
+
 pool_tokens = pool_tokens.join(pools_df)
 # %%
 pool_tokens["coin_1_deposit"] = (
@@ -201,7 +228,7 @@ pool_tokens["pool_deposit_tocyb"] = (
 )
 
 # pool_tokens["storage"] = pool_tokens["coin_1"] + "-" + pool_tokens["coin_2"]
-pool_tokens["storage"] = "pool"
+
 
 # %%
 def pool_tokens_pivot_longer(pool_tokens):
@@ -219,21 +246,6 @@ pool_tokens_stack_df = pool_tokens_pivot_longer(pool_tokens)
 # %%
 non_pool_df = balance_df.loc[~balance_df.index.str.startswith("pool")].reset_index()
 
-# %%
-def get_rewards(address: str):
-    rewards = get_json_from_bash_query(
-        f"cyber query distribution rewards {address} --chain-id bostrom --node https://rpc.bostrom.cybernode.ai:443 -o json"
-    )["total"]
-    rewards_df = pd.DataFrame.from_records(rewards)
-    rewards_df["amount"] = rewards_df["amount"].astype("float_").astype("int64")
-    rewards_df["address"] = address
-    rewards_df["storage"] = "rewards"
-    rewards_df = rewards_df[rewards_df["amount"] != 0]
-
-    return rewards_df
-
-
-rewards_df = pd.concat([get_rewards(address) for address in ADDRESSES_DICT.keys()])
 
 # %%
 def get_vested_tokens(address: str):
@@ -282,7 +294,7 @@ non_vested_df["storage"] = "liquid"
 
 # %%
 total_tokens_df = pd.concat(
-    [pool_tokens_stack_df, non_vested_df, delegations_df, vested_df, rewards_df]
+    [pool_tokens_stack_df, non_vested_df, delegations_df, vested_df, rewards_staking_df]
 )
 
 total_tokens_df = pd.merge(
@@ -302,14 +314,20 @@ total_tokens_df = total_tokens_df.sort_values(
 
 total_tokens_df["denom"] = total_tokens_df["denom"].map(lambda x: rename_denom(x))
 
-
-total_tokens_df["amount"].where(
-    total_tokens_df["denom"].isin(TOKENS_TO_CONVERT.keys()),
-    total_tokens_df["amount"] / 1000,
-)
-
 total_tokens_df["denom"] = total_tokens_df["denom"].replace(TOKENS_TO_CONVERT)
 total_tokens_df["denom"] = total_tokens_df["denom"].str.upper()
+
+total_tokens_df["amount"].where(
+    ~total_tokens_df["denom"].isin(["OSMO", "ATOM"]),
+    total_tokens_df["amount"] / 1000000,
+    inplace=True,
+)
+
+total_tokens_df["amount"].where(
+    ~total_tokens_df["denom"].isin(["AMPERE", "VOLT"]),
+    total_tokens_df["amount"] / 1000,
+    inplace=True,
+)
 
 total_tokens_df = total_tokens_df[
     ["address_label", "denom", "storage", "amount", "amount_in_tocyb", "address"]
