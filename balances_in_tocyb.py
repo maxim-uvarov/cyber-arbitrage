@@ -44,7 +44,7 @@ _time_of_update = datetime.datetime.now()  # Time to mark all dfs
 
 # %%
 
-total_supply_bostrom_df = (
+supply_bostrom_df = (
     pd.DataFrame.from_records(
         get_json_from_bash_query(
             "cyber query bank total --chain-id bostrom --node https://rpc.bostrom.cybernode.ai:443 -o json"
@@ -73,7 +73,6 @@ pools_df["balances"] = pools_df["reserve_account_address"].map(
         f"cyber query bank balances {address} --chain-id bostrom --node https://rpc.bostrom.cybernode.ai:443  -o json"
     )["balances"]
 )
-# %%
 
 pools_df["coin_1_amount"] = (
     pools_df["balances"].apply(lambda x: x[0]["amount"]).astype("int64")
@@ -85,12 +84,12 @@ pools_df["coin_2_amount"] = (
 pools_df[["coin_1", "coin_2"]] = pools_df["reserve_coin_denoms"].apply(
     lambda x: pd.Series([x[0], x[1]])
 )
-# %%
+
 pools_df = pd.DataFrame.merge(
-    pools_df, total_supply_bostrom_df, left_index=True, right_index=True
-)
-pools_df.drop(
-    columns=["reserve_coin_denoms", "reserve_account_address", "balances"], inplace=True
+    pools_df,
+    supply_bostrom_df["pool_tokens_amount"],
+    left_index=True,
+    right_index=True,
 )
 
 # %%
@@ -151,14 +150,14 @@ def get_delegations(address: str):
             "denom": ["boot"],
             "amount": [boots_delegated],
             "address": [address],
-            "storage": ["delegated"],
+            "state": ["delegated"],
         }
     )
 
     return row
 
 
-delegations_df = pd.concat(
+delegated_df = pd.concat(
     [get_delegations(address) for address in ADDRESSES_DICT.keys()]
 )
 
@@ -182,11 +181,11 @@ rewards_df = pd.concat([get_rewards(address) for address in ADDRESSES_DICT.keys(
 rewards_pools_df = rewards_df[rewards_df["denom"].str.startswith("pool")].set_index(
     "denom"
 )
-rewards_pools_df["storage"] = "pool-rewards"
+rewards_pools_df["state"] = "pool-rewards"
 
 rewards_staking_df = rewards_df[~rewards_df["denom"].str.startswith("pool")]
 
-rewards_staking_df["storage"] = "rewards"
+rewards_staking_df["state"] = "rewards"
 
 
 def get_balance(address: str):
@@ -205,7 +204,7 @@ balance_df = pd.concat([get_balance(address) for address in ADDRESSES_DICT.keys(
 
 # %%
 pool_tokens = balance_df.loc[balance_df.index.str.startswith("pool")]
-pool_tokens["storage"] = "pool"
+pool_tokens["state"] = "pool"
 
 pool_tokens = pd.concat([pool_tokens, rewards_pools_df])
 
@@ -227,28 +226,28 @@ pool_tokens["pool_deposit_tocyb"] = (
     * pool_tokens["pool_value_in_tocyb"]
 )
 
-# pool_tokens["storage"] = pool_tokens["coin_1"] + "-" + pool_tokens["coin_2"]
+# pool_tokens["state"] = pool_tokens["coin_1"] + "-" + pool_tokens["coin_2"]
 
 
 # %%
 def pool_tokens_pivot_longer(pool_tokens):
-    df1 = pool_tokens[["coin_1", "coin_1_deposit", "address", "storage"]]
-    df1.columns = ["denom", "amount", "address", "storage"]
-    df2 = pool_tokens[["coin_2", "coin_2_deposit", "address", "storage"]]
-    df2.columns = ["denom", "amount", "address", "storage"]
+    df1 = pool_tokens[["coin_1", "coin_1_deposit", "address", "state"]]
+    df1.columns = ["denom", "amount", "address", "state"]
+    df2 = pool_tokens[["coin_2", "coin_2_deposit", "address", "state"]]
+    df2.columns = ["denom", "amount", "address", "state"]
 
-    pool_tokens_stack_df = pd.concat([df1, df2]).reset_index(drop=True)
-    return pool_tokens_stack_df
+    tokens_in_pools_df = pd.concat([df1, df2]).reset_index(drop=True)
+    return tokens_in_pools_df
 
 
-pool_tokens_stack_df = pool_tokens_pivot_longer(pool_tokens)
+tokens_in_pools_df = pool_tokens_pivot_longer(pool_tokens)
 
 # %%
 non_pool_df = balance_df.loc[~balance_df.index.str.startswith("pool")].reset_index()
 
 
 # %%
-def get_vested_tokens(address: str):
+def get_investminted_tokens(address: str):
     json = get_json_from_bash_query(
         f"cyber query account {address} --chain-id bostrom --node https://rpc.bostrom.cybernode.ai:443 -o json"
     )
@@ -271,75 +270,75 @@ def get_vested_tokens(address: str):
     df = df.reset_index()
 
     df["address"] = address
-    df["storage"] = "vested"
+    df["state"] = "investminted"
 
     return df
 
 
-vested_df = pd.concat([get_vested_tokens(address) for address in ADDRESSES_DICT.keys()])
+investminted_df = pd.concat(
+    [get_investminted_tokens(address) for address in ADDRESSES_DICT.keys()]
+)
 
 
 # %%
-non_vested_df = pd.merge(
+liquid_df = pd.merge(
     non_pool_df,
-    vested_df,
+    investminted_df,
     left_on=["denom", "address"],
     right_on=["denom", "address"],
     how="left",
 ).fillna(0)
 
-non_vested_df["amount"] = non_vested_df["amount_x"] - non_vested_df["amount_y"]
-non_vested_df = non_vested_df[["denom", "address", "amount"]]
-non_vested_df["storage"] = "liquid"
+liquid_df["amount"] = liquid_df["amount_x"] - liquid_df["amount_y"]
+liquid_df = liquid_df[["denom", "address", "amount"]]
+liquid_df["state"] = "liquid"
 
 # %%
-total_tokens_df = pd.concat(
-    [pool_tokens_stack_df, non_vested_df, delegations_df, vested_df, rewards_staking_df]
+total_df = pd.concat(
+    [
+        tokens_in_pools_df,
+        liquid_df,
+        delegated_df,
+        investminted_df,
+        rewards_staking_df,
+    ]
 )
 
-total_tokens_df = pd.merge(
-    total_tokens_df, prices_df, left_on="denom", how="left", right_index=True
-)
-total_tokens_df["amount_in_tocyb"] = (
-    total_tokens_df["price_in_tocyb"] * total_tokens_df["amount"]
-)
+total_df = pd.merge(total_df, prices_df, left_on="denom", how="left", right_index=True)
+total_df["amount_in_tocyb"] = total_df["price_in_tocyb"] * total_df["amount"]
 
-total_tokens_df.drop(columns="price_in_tocyb", inplace=True)
+total_df.drop(columns="price_in_tocyb", inplace=True)
 
-total_tokens_df["address_label"] = total_tokens_df["address"].map(ADDRESSES_DICT)
+total_df["address_label"] = total_df["address"].map(ADDRESSES_DICT)
 
-total_tokens_df = total_tokens_df.sort_values(
-    ["address_label", "amount_in_tocyb"], ascending=False
-)
+total_df = total_df.sort_values(["address_label", "amount_in_tocyb"], ascending=False)
 
-total_tokens_df["denom"] = total_tokens_df["denom"].map(lambda x: rename_denom(x))
+total_df["denom"] = total_df["denom"].map(lambda x: rename_denom(x))
 
-total_tokens_df["denom"] = total_tokens_df["denom"].replace(TOKENS_TO_CONVERT)
-total_tokens_df["denom"] = total_tokens_df["denom"].str.upper()
+total_df["denom"] = total_df["denom"].replace(TOKENS_TO_CONVERT)
+total_df["denom"] = total_df["denom"].str.upper()
 
-total_tokens_df["amount"].where(
-    ~total_tokens_df["denom"].isin(["OSMO", "ATOM"]),
-    total_tokens_df["amount"] / 1000000,
+total_df["amount"].where(
+    ~total_df["denom"].isin(["OSMO", "ATOM"]),
+    total_df["amount"] / 1000000,
     inplace=True,
 )
 
-total_tokens_df["amount"].where(
-    ~total_tokens_df["denom"].isin(["AMPERE", "VOLT"]),
-    total_tokens_df["amount"] / 1000,
+total_df["amount"].where(
+    ~total_df["denom"].isin(["AMPERE", "VOLT"]),
+    total_df["amount"] / 1000,
     inplace=True,
 )
 
-total_tokens_df = total_tokens_df[
-    ["address_label", "denom", "storage", "amount", "amount_in_tocyb", "address"]
+total_df = total_df[
+    ["address_label", "denom", "state", "amount", "amount_in_tocyb", "address"]
 ]
-# total_tokens_df.to_clipboard()
+# total_df.to_clipboard()
 
-# total_tokens_df.style.format(thousands=",", precision=0)
+# total_df.style.format(thousands=",", precision=0)
 
 pd.set_option("display.max_colwidth", None)
 pd.options.display.float_format = "{0:7,.0f}".format
-display(
-    HTML(total_tokens_df.to_html(index=False, notebook=True, show_dimensions=False))
-)
+display(HTML(total_df.to_html(index=False, notebook=True, show_dimensions=False)))
 
 # %%
