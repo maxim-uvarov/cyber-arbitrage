@@ -2,17 +2,19 @@
 # # Bostrom balances in TOCYB
 # This notebook collects the amount of tokens that neurons owns in the Bostrom.
 # Tokens are divided by their state (liquid, delegated, investminted, rewards).
+#
 # To achieve this a number of requests (of using cyber cli) are made, as there is
 # no single method in cli, that produces the needed output.
 # Further, all tokens value is estimated in the prices of TOCYB token.
+#
 # This is done for informational purposes. If one decide to convert those tokens
 # to TOCYBs using Bostrom's pools - the amount of TOCYB recieved will be less then
 # estimated in this notebook.
+#
+# Forked from https://github.com/Snedashkovsky/cyber-arbitrage. Thanks, Sergey!
 
 # %%
 import datetime
-from multiprocessing import pool
-from time import time
 
 import pandas as pd
 from IPython.core.display import HTML, display
@@ -138,7 +140,7 @@ def calculate_prices(pools_df):
 
 prices_df = calculate_prices(pools_df)
 
-print(prices_df)
+print(prices_df.to_string(index=True))
 
 # %%
 def get_delegations(address: str):
@@ -166,7 +168,6 @@ delegated_df = pd.concat(
     [get_delegations(address) for address in ADDRESSES_DICT.keys()]
 )
 
-print(delegated_df)
 # %%
 def get_rewards(address: str):
     rewards = get_json_from_bash_query(
@@ -182,8 +183,6 @@ def get_rewards(address: str):
 
 
 rewards_all_df = pd.concat([get_rewards(address) for address in ADDRESSES_DICT.keys()])
-
-print(rewards_all_df)
 
 rewards_pools_df = rewards_all_df[
     rewards_all_df["denom"].str.startswith("pool")
@@ -244,17 +243,17 @@ tokens_in_pools_df = calculate_owned_amount_of_tokens_in_pools(balance_df)
 
 # %%
 def get_investminted_tokens(address: str):
-    json = get_json_from_bash_query(
+    js1 = get_json_from_bash_query(
         f"cyber query account {address} --chain-id bostrom --node https://rpc.bostrom.cybernode.ai:443 -o json"
     )
 
     ep = datetime.datetime(1970, 1, 1, 0, 0, 0)
     current_time = (datetime.datetime.utcnow() - ep).total_seconds()
 
-    slot_time = int(json["start_time"])
+    slot_time = int(js1["start_time"])
     slots = []
 
-    for i in json["vesting_periods"]:
+    for i in js1["vesting_periods"]:
         slot_time = int(i["length"]) + slot_time
         if slot_time > current_time:
             slots.extend(i["amount"])
@@ -349,8 +348,17 @@ total_df = calculate_total_df(
 
 # %%
 pd.set_option("display.max_colwidth", None)
-pd.options.display.float_format = "{0:7,.0f}".format
-display(HTML(total_df.to_html(index=False, notebook=True, show_dimensions=False)))
+
+display(
+    HTML(
+        total_df.to_html(
+            index=False,
+            notebook=True,
+            show_dimensions=True,
+            float_format="{0:,.0f}".format,
+        )
+    )
+)
 
 # %%
 from pivottablejs import pivot_ui
