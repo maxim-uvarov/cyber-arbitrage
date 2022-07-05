@@ -15,8 +15,8 @@ BOSTROM_POOLS_BASH_QUERY = (
 )
 
 ADDRESSES_DICT = {
-    # "bostrom1s4czxghmh29aw2ldynk8r9lnkfccw5ph8rjpxa": "1",
-    # "bostrom1dxpm2ne0jflzr2hy9j5has6u2dvfv68calunqy": "2",
+    "bostrom1s4czxghmh29aw2ldynk8r9lnkfccw5ph8rjpxa": "1",
+    "bostrom1dxpm2ne0jflzr2hy9j5has6u2dvfv68calunqy": "2",
     "bostrom1nngr5aj3gcvphlhnvtqth8k3sl4asq3n6r76m8": "3",
 }
 
@@ -314,4 +314,10 @@ pd.set_option("display.max_colwidth", None)
 pd.options.display.float_format = "{0:7,.0f}".format
 display(HTML(total_df.to_html(index=False, notebook=True, show_dimensions=False)))
 
+# %%
+from pivottablejs import pivot_ui
+import ipypivot as pt
+
+# %%
+pivot_ui(total_df)
 # %%
