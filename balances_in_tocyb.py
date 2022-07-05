@@ -1,5 +1,9 @@
+# %% [markdown]
+# # Bostrom balances in TOCYB
+
 # %%
 import datetime
+from multiprocessing import pool
 from time import time
 
 import pandas as pd
@@ -25,7 +29,7 @@ TOKENS_TO_CONVERT = {
     "milliampere": "AMPERE",
     "uosmo in bostrom": "OSMO",
     "uatom in bostrom": "ATOM",
-}  # tokens to divide by 1000
+}
 
 
 def rename_denom(denom: str, ibc_coin_names: dict = IBC_COIN_NAMES) -> str:
@@ -35,7 +39,6 @@ def rename_denom(denom: str, ibc_coin_names: dict = IBC_COIN_NAMES) -> str:
 _time_of_update = datetime.datetime.now()  # Time to mark all dfs
 
 # %%
-
 supply_bostrom_df = (
     pd.DataFrame.from_records(
         get_json_from_bash_query(
@@ -48,74 +51,84 @@ supply_bostrom_df = (
 )
 
 # %%
-pools_df = (
-    pd.DataFrame.from_records(
-        get_json_from_bash_query(
-            "cyber query liquidity pools  --chain-id bostrom --node https://rpc.bostrom.cybernode.ai:443 -o json"
-        )["pools"]
+def get_pools(supply_bostrom_df):
+    pools_df = (
+        pd.DataFrame.from_records(
+            get_json_from_bash_query(
+                "cyber query liquidity pools  --chain-id bostrom --node https://rpc.bostrom.cybernode.ai:443 -o json"
+            )["pools"]
+        )
+        .set_index("pool_coin_denom")
+        .drop(columns=["id", "type_id"])
     )
-    .set_index("pool_coin_denom")
-    .drop(columns=["id", "type_id"])
-)
+
+    pools_df["balances"] = pools_df["reserve_account_address"].map(
+        lambda address: get_json_from_bash_query(
+            f"cyber query bank balances {address} --chain-id bostrom --node https://rpc.bostrom.cybernode.ai:443  -o json"
+        )["balances"]
+    )
+
+    pools_df["coin_1_amount"] = (
+        pools_df["balances"].apply(lambda x: x[0]["amount"]).astype("int64")
+    )
+    pools_df["coin_2_amount"] = (
+        pools_df["balances"].apply(lambda x: x[1]["amount"]).astype("int64")
+    )
+
+    pools_df[["coin_1", "coin_2"]] = pools_df["reserve_coin_denoms"].apply(
+        lambda x: pd.Series([x[0], x[1]])
+    )
+
+    pools_df = pd.DataFrame.merge(
+        pools_df,
+        supply_bostrom_df,
+        left_index=True,
+        right_index=True,
+    )
+
+    return pools_df
 
 
-# %%
-pools_df["balances"] = pools_df["reserve_account_address"].map(
-    lambda address: get_json_from_bash_query(
-        f"cyber query bank balances {address} --chain-id bostrom --node https://rpc.bostrom.cybernode.ai:443  -o json"
-    )["balances"]
-)
-
-pools_df["coin_1_amount"] = (
-    pools_df["balances"].apply(lambda x: x[0]["amount"]).astype("int64")
-)
-pools_df["coin_2_amount"] = (
-    pools_df["balances"].apply(lambda x: x[1]["amount"]).astype("int64")
-)
-
-pools_df[["coin_1", "coin_2"]] = pools_df["reserve_coin_denoms"].apply(
-    lambda x: pd.Series([x[0], x[1]])
-)
-
-pools_df = pd.DataFrame.merge(
-    pools_df,
-    supply_bostrom_df,
-    left_index=True,
-    right_index=True,
-)
+pools_df = get_pools(supply_bostrom_df)
 
 # %%
 # here we calculate prices on tokens in H and TOCYB
-df_temp = pools_df[["coin_1", "coin_1_amount", "coin_2", "coin_2_amount"]]
+def calculate_prices(pools_df):
+    df_temp = pools_df[["coin_1", "coin_1_amount", "coin_2", "coin_2_amount"]]
 
-df_temp_reverse = df_temp.copy()
-df_temp_reverse.columns = ["coin_2", "coin_2_amount", "coin_1", "coin_1_amount"]
+    df_temp_reverse = df_temp.copy()
+    df_temp_reverse.columns = ["coin_2", "coin_2_amount", "coin_1", "coin_1_amount"]
 
-prices_df = pd.concat(
-    [
-        df_temp,
-        df_temp_reverse,
-        pd.DataFrame.from_dict(
-            {
-                "coin_1": ["hydrogen"],
-                "coin_2": ["hydrogen"],
-                "coin_1_amount": [1],
-                "coin_2_amount": [1],
-            }
-        ),
-    ]
-)
-prices_df = prices_df[prices_df["coin_2"] == "hydrogen"]
-prices_df = prices_df.set_index("coin_1")
-prices_df = prices_df[["coin_1_amount", "coin_2_amount"]]
+    prices_df = pd.concat(
+        [
+            df_temp,
+            df_temp_reverse,
+            pd.DataFrame.from_dict(
+                {
+                    "coin_1": ["hydrogen"],
+                    "coin_2": ["hydrogen"],
+                    "coin_1_amount": [1],
+                    "coin_2_amount": [1],
+                }
+            ),
+        ]
+    )
+    prices_df = prices_df[prices_df["coin_2"] == "hydrogen"]
+    prices_df = prices_df.set_index("coin_1")
+    prices_df = prices_df[["coin_1_amount", "coin_2_amount"]]
+
+    prices_df["price_in_h"] = prices_df["coin_2_amount"] / prices_df["coin_1_amount"]
+    h_in_tocyb = prices_df.at["tocyb", "price_in_h"]
+
+    prices_df["price_in_tocyb"] = prices_df["price_in_h"] / h_in_tocyb  # type: ignore
+    prices_df.drop(
+        columns=["coin_1_amount", "coin_2_amount", "price_in_h"], inplace=True
+    )
+
+    return prices_df
 
 
-prices_df["price_in_h"] = prices_df["coin_2_amount"] / prices_df["coin_1_amount"]
-h_in_tocyb = prices_df.at["tocyb", "price_in_h"]
-
-prices_df["price_in_tocyb"] = prices_df["price_in_h"] / h_in_tocyb  # type: ignore
-prices_df.drop(columns=["coin_1_amount", "coin_2_amount", "price_in_h"], inplace=True)
-
+prices_df = calculate_prices(pools_df)
 
 # %%
 def get_delegations(address: str):
@@ -143,14 +156,13 @@ delegated_df = pd.concat(
     [get_delegations(address) for address in ADDRESSES_DICT.keys()]
 )
 
-
 # %%
 def get_rewards(address: str):
     rewards = get_json_from_bash_query(
         f"cyber query distribution rewards {address} --chain-id bostrom --node https://rpc.bostrom.cybernode.ai:443 -o json"
     )["total"]
-    rewards_df = pd.DataFrame.from_records(rewards)
-    rewards_df["amount"] = rewards_df["amount"].astype("float_").astype("int64")
+    rewards_all_df = pd.DataFrame.from_records(rewards)
+    rewards_all_df["amount"] = rewards_all_df["amount"].astype("float_").astype("int64")
     rewards_df["address"] = address
 
     rewards_df = rewards_df[rewards_df["amount"] != 0]
@@ -158,18 +170,17 @@ def get_rewards(address: str):
     return rewards_df
 
 
-rewards_df = pd.concat([get_rewards(address) for address in ADDRESSES_DICT.keys()])
+rewards_all_df = pd.concat([get_rewards(address) for address in ADDRESSES_DICT.keys()])
 
-rewards_pools_df = rewards_df[rewards_df["denom"].str.startswith("pool")].set_index(
-    "denom"
-)
+rewards_pools_df = rewards_all_df[
+    rewards_all_df["denom"].str.startswith("pool")
+].set_index("denom")
 rewards_pools_df["state"] = "pool-rewards"
 
-rewards_staking_df = rewards_df[~rewards_df["denom"].str.startswith("pool")]
-
+rewards_staking_df = rewards_all_df[~rewards_all_df["denom"].str.startswith("pool")]
 rewards_staking_df["state"] = "rewards"
 
-
+# %%
 def get_balance(address: str):
     balance = get_json_from_bash_query(
         f"cyber query bank balances {address} --chain-id bostrom --node https://rpc.bostrom.cybernode.ai:443 -o json"
@@ -184,28 +195,28 @@ def get_balance(address: str):
 
 balance_df = pd.concat([get_balance(address) for address in ADDRESSES_DICT.keys()])
 
-# %%
-pool_tokens = balance_df.loc[balance_df.index.str.startswith("pool")]
-pool_tokens["state"] = "pool"
-
-pool_tokens = pd.concat([pool_tokens, rewards_pools_df])
-
-pool_tokens = pool_tokens.join(pools_df)
-# %%
-pool_tokens["coin_1_amount_to_withdraw"] = (
-    pool_tokens["amount"]
-    / pool_tokens["pool_tokens_amount"]
-    * pool_tokens["coin_1_amount"]
-)
-pool_tokens["coin_2_amount_to_withdraw"] = (
-    pool_tokens["amount"]
-    / pool_tokens["pool_tokens_amount"]
-    * pool_tokens["coin_2_amount"]
-)
-
+non_pool_df = balance_df.loc[~balance_df.index.str.startswith("pool")].reset_index()
 
 # %%
-def pool_tokens_pivot_longer(pool_tokens):
+def calculate_owned_amount_of_tokens_in_pools(balance_df=balance_df):
+    pool_tokens = balance_df.loc[balance_df.index.str.startswith("pool")]
+    pool_tokens["state"] = "pool"
+
+    pool_tokens = pd.concat([pool_tokens, rewards_pools_df])
+
+    pool_tokens = pool_tokens.join(pools_df)
+
+    pool_tokens["coin_1_amount_to_withdraw"] = (
+        pool_tokens["amount"]
+        / pool_tokens["pool_tokens_amount"]
+        * pool_tokens["coin_1_amount"]
+    )
+    pool_tokens["coin_2_amount_to_withdraw"] = (
+        pool_tokens["amount"]
+        / pool_tokens["pool_tokens_amount"]
+        * pool_tokens["coin_2_amount"]
+    )
+
     df1 = pool_tokens[["coin_1", "coin_1_amount_to_withdraw", "address", "state"]]
     df1.columns = ["denom", "amount", "address", "state"]
     df2 = pool_tokens[["coin_2", "coin_2_amount_to_withdraw", "address", "state"]]
@@ -215,10 +226,7 @@ def pool_tokens_pivot_longer(pool_tokens):
     return tokens_in_pools_df
 
 
-tokens_in_pools_df = pool_tokens_pivot_longer(pool_tokens)
-
-# %%
-non_pool_df = balance_df.loc[~balance_df.index.str.startswith("pool")].reset_index()
+tokens_in_pools_df = calculate_owned_amount_of_tokens_in_pools(balance_df)
 
 
 # %%
@@ -254,7 +262,6 @@ investminted_df = pd.concat(
     [get_investminted_tokens(address) for address in ADDRESSES_DICT.keys()]
 )
 
-
 # %%
 liquid_df = pd.merge(
     non_pool_df,
@@ -269,7 +276,47 @@ liquid_df = liquid_df[["denom", "address", "amount"]]
 liquid_df["state"] = "liquid"
 
 # %%
-total_df = pd.concat(
+def calculate_total_df(dfs_to_cocncat: list):
+
+    total_df = pd.concat(dfs_to_cocncat)
+    total_df = pd.merge(
+        total_df, prices_df, left_on="denom", how="left", right_index=True
+    )
+    total_df["amount_in_tocyb"] = total_df["price_in_tocyb"] * total_df["amount"]
+
+    total_df.drop(columns="price_in_tocyb", inplace=True)
+
+    total_df["address_label"] = total_df["address"].map(ADDRESSES_DICT)
+
+    total_df = total_df.sort_values(
+        ["address_label", "amount_in_tocyb"], ascending=False
+    )
+
+    total_df["denom"] = total_df["denom"].map(lambda x: rename_denom(x))
+
+    total_df["denom"] = total_df["denom"].replace(TOKENS_TO_CONVERT)
+    total_df["denom"] = total_df["denom"].str.upper()
+
+    total_df["amount"].where(
+        ~total_df["denom"].isin(["OSMO", "ATOM"]),
+        total_df["amount"] / 1000000,
+        inplace=True,
+    )
+
+    total_df["amount"].where(
+        ~total_df["denom"].isin(["AMPERE", "VOLT"]),
+        total_df["amount"] / 1000,
+        inplace=True,
+    )
+
+    total_df = total_df[
+        ["address_label", "denom", "state", "amount", "amount_in_tocyb", "address"]
+    ]
+
+    return total_df
+
+
+total_df = calculate_total_df(
     [
         tokens_in_pools_df,
         liquid_df,
@@ -279,37 +326,9 @@ total_df = pd.concat(
     ]
 )
 
-total_df = pd.merge(total_df, prices_df, left_on="denom", how="left", right_index=True)
-total_df["amount_in_tocyb"] = total_df["price_in_tocyb"] * total_df["amount"]
-
-total_df.drop(columns="price_in_tocyb", inplace=True)
-
-total_df["address_label"] = total_df["address"].map(ADDRESSES_DICT)
-
-total_df = total_df.sort_values(["address_label", "amount_in_tocyb"], ascending=False)
-
-total_df["denom"] = total_df["denom"].map(lambda x: rename_denom(x))
-
-total_df["denom"] = total_df["denom"].replace(TOKENS_TO_CONVERT)
-total_df["denom"] = total_df["denom"].str.upper()
-
-total_df["amount"].where(
-    ~total_df["denom"].isin(["OSMO", "ATOM"]),
-    total_df["amount"] / 1000000,
-    inplace=True,
-)
-
-total_df["amount"].where(
-    ~total_df["denom"].isin(["AMPERE", "VOLT"]),
-    total_df["amount"] / 1000,
-    inplace=True,
-)
-
-total_df = total_df[
-    ["address_label", "denom", "state", "amount", "amount_in_tocyb", "address"]
-]
 # total_df.to_clipboard()
 
+# %%
 pd.set_option("display.max_colwidth", None)
 pd.options.display.float_format = "{0:7,.0f}".format
 display(HTML(total_df.to_html(index=False, notebook=True, show_dimensions=False)))
@@ -319,5 +338,12 @@ from pivottablejs import pivot_ui
 import ipypivot as pt
 
 # %%
-pivot_ui(total_df)
+pivot_ui(
+    total_df,
+    rows=["state", "denom"],
+    cols=["address_label"],
+    # aggregator='$.pivotUtilities .aggregators["Integer Sum"]()',
+    aggregatorName="Integer Sum",
+)
+
 # %%
