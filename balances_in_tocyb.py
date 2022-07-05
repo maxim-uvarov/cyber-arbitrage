@@ -1,5 +1,13 @@
 # %% [markdown]
 # # Bostrom balances in TOCYB
+# This notebook collects the amount of tokens that neurons owns in the Bostrom.
+# Tokens are divided by their state (liquid, delegated, investminted, rewards).
+# To achieve this a number of requests (of using cyber cli) are made, as there is
+# no single method in cli, that produces the needed output.
+# Further, all tokens value is estimated in the prices of TOCYB token.
+# This is done for informational purposes. If one decide to convert those tokens
+# to TOCYBs using Bostrom's pools - the amount of TOCYB recieved will be less then
+# estimated in this notebook.
 
 # %%
 import datetime
@@ -130,6 +138,8 @@ def calculate_prices(pools_df):
 
 prices_df = calculate_prices(pools_df)
 
+print(prices_df)
+
 # %%
 def get_delegations(address: str):
     delegations = pd.DataFrame.from_records(
@@ -156,6 +166,7 @@ delegated_df = pd.concat(
     [get_delegations(address) for address in ADDRESSES_DICT.keys()]
 )
 
+print(delegated_df)
 # %%
 def get_rewards(address: str):
     rewards = get_json_from_bash_query(
@@ -163,22 +174,24 @@ def get_rewards(address: str):
     )["total"]
     rewards_all_df = pd.DataFrame.from_records(rewards)
     rewards_all_df["amount"] = rewards_all_df["amount"].astype("float_").astype("int64")
-    rewards_df["address"] = address
+    rewards_all_df["address"] = address
 
-    rewards_df = rewards_df[rewards_df["amount"] != 0]
+    rewards_all_df = rewards_all_df[rewards_all_df["amount"] != 0]
 
-    return rewards_df
+    return rewards_all_df
 
 
 rewards_all_df = pd.concat([get_rewards(address) for address in ADDRESSES_DICT.keys()])
 
+print(rewards_all_df)
+
 rewards_pools_df = rewards_all_df[
     rewards_all_df["denom"].str.startswith("pool")
 ].set_index("denom")
-rewards_pools_df["state"] = "pool-rewards"
+rewards_pools_df["state"] = "rewards-pools"
 
 rewards_staking_df = rewards_all_df[~rewards_all_df["denom"].str.startswith("pool")]
-rewards_staking_df["state"] = "rewards"
+rewards_staking_df["state"] = "rewards-stacking"
 
 # %%
 def get_balance(address: str):
@@ -263,17 +276,23 @@ investminted_df = pd.concat(
 )
 
 # %%
-liquid_df = pd.merge(
-    non_pool_df,
-    investminted_df,
-    left_on=["denom", "address"],
-    right_on=["denom", "address"],
-    how="left",
-).fillna(0)
+def get_liquid(non_pool_df, investminted_df):
+    liquid_df = pd.merge(
+        non_pool_df,
+        investminted_df,
+        left_on=["denom", "address"],
+        right_on=["denom", "address"],
+        how="left",
+    ).fillna(0)
 
-liquid_df["amount"] = liquid_df["amount_x"] - liquid_df["amount_y"]
-liquid_df = liquid_df[["denom", "address", "amount"]]
-liquid_df["state"] = "liquid"
+    liquid_df["amount"] = liquid_df["amount_x"] - liquid_df["amount_y"]
+    liquid_df = liquid_df[["denom", "address", "amount"]]
+    liquid_df["state"] = "liquid"
+
+    return liquid_df
+
+
+liquid_df = get_liquid(non_pool_df, investminted_df)
 
 # %%
 def calculate_total_df(dfs_to_cocncat: list):
