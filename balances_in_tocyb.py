@@ -157,7 +157,7 @@ def get_delegations(address: str):
             "denom": ["boot"],
             "amount": [boots_delegated],
             "address": [address],
-            "state": ["delegated"],
+            "state": ["frozen"],
         }
     )
 
@@ -265,7 +265,7 @@ def get_investminted_tokens(address: str):
     df = df.reset_index()
 
     df["address"] = address
-    df["state"] = "investminted"
+    df["state"] = "frozen"
 
     return df
 
@@ -294,7 +294,7 @@ def get_liquid(non_pool_df, investminted_df):
 liquid_df = get_liquid(non_pool_df, investminted_df)
 
 # %%
-def calculate_total_df(dfs_to_cocncat: list):
+def aggregate_totals(dfs_to_cocncat: list):
 
     total_df = pd.concat(dfs_to_cocncat)
     total_df = pd.merge(
