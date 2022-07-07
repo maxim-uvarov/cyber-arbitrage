@@ -334,7 +334,7 @@ def aggregate_totals(dfs_to_cocncat: list):
     return total_df
 
 
-total_df = calculate_total_df(
+total_df = aggregate_totals(
     [
         tokens_in_pools_df,
         liquid_df,
