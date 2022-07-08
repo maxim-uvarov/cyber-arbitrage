@@ -190,7 +190,7 @@ rewards_pools_df = rewards_all_df[
 rewards_pools_df["state"] = "rewards-pools"
 
 rewards_staking_df = rewards_all_df[~rewards_all_df["denom"].str.startswith("pool")]
-rewards_staking_df["state"] = "rewards-stacking"
+rewards_staking_df["state"] = "rewards-staking"
 
 # %%
 def get_balance(address: str):
