@@ -20,11 +20,10 @@ import datetime
 import pandas as pd
 from IPython.core.display import HTML, display
 
-from config import BOSTROM_NODE_URL, IBC_COIN_NAMES
+from config import IBC_COIN_NAMES
 from src.bash_utils import get_json_from_bash_query
 
 # %%
-BOSTROM_NODE_URL = "https://rpc.bostrom.cybernode.ai:443"
 
 ADDRESSES_DICT = {
     # "bostrom1nmr4flrrzrka3lanfwxklunsapr92fqq5rfrd3": "1",
@@ -75,14 +74,16 @@ def get_supply(height=0):
         .set_index("denom")
         .rename(columns={"amount": "pool_tokens_amount"})
         .astype("int64")
-        .assign(height=height)
     )
 
     return supply_bostrom_df
 
 
 # %%
-def get_pools(supply_bostrom_df, height=0):
+def get_pools(height=0):
+
+    supply_bostrom_df = get_supply(height)
+
     pools_df = (
         pd.DataFrame.from_records(
             get_json_from_bash_query(
@@ -116,8 +117,6 @@ def get_pools(supply_bostrom_df, height=0):
         left_index=True,
         right_index=True,
     )
-
-    pools_df["height"] = height
 
     return pools_df
 
@@ -175,7 +174,7 @@ def get_delegations(address: str, height=0):
             "amount": [boots_delegated],
             "address": [address],
             "state": ["frozen"],
-            "height": [height],
+            # "height": [height],
         }
     )
 
@@ -192,13 +191,12 @@ def get_rewards(address: str, height=0):
     rewards_all_df["address"] = address
 
     rewards_all_df = rewards_all_df[rewards_all_df["amount"] != 0]
-    rewards_all_df["height"] = height
 
     return rewards_all_df
 
 
 # %%
-def get_pool_rewards(rewards_all_df):
+def filter_pool_rewards(rewards_all_df):
 
     rewards_pools_df = rewards_all_df[
         rewards_all_df["denom"].str.startswith("pool")
@@ -209,7 +207,7 @@ def get_pool_rewards(rewards_all_df):
 
 
 # %%
-def get_staking_rewards(rewards_all_df):
+def filter_stacking_rewards(rewards_all_df):
     rewards_staking_df = rewards_all_df[~rewards_all_df["denom"].str.startswith("pool")]
     rewards_staking_df["state"] = "rewards-staking"
 
@@ -232,13 +230,14 @@ def get_balance(address: str, height=0):
 # %%
 
 # %%
-def calculate_owned_amount_of_tokens_in_pools(balance_df, pools_df, rewards_pools_df):
+def calculate_owned_amount_in_pools(balance_df, pools_df, rewards_pools_df):
     pool_tokens = balance_df.loc[balance_df.index.str.startswith("pool")]
     pool_tokens["state"] = "pool"
 
     pool_tokens = pd.concat([pool_tokens, rewards_pools_df])
 
-    pool_tokens = pool_tokens.join(pools_df.drop(columns="height"))
+    # pool_tokens = pool_tokens.join(pools_df.drop(columns="height"))
+    pool_tokens = pool_tokens.join(pools_df)
 
     pool_tokens["coin_1_amount_to_withdraw"] = (
         pool_tokens["amount"]
@@ -261,18 +260,18 @@ def calculate_owned_amount_of_tokens_in_pools(balance_df, pools_df, rewards_pool
 
 
 # %%
-def get_investminted_tokens(address: str, height=0):
-    js1 = get_json_from_bash_query(
+def get_investminted(address: str, height=0):
+    investminted = get_json_from_bash_query(
         f"cyber query account {address} {DEFAULT_CLI_PARAMS} --height {height}"
     )
 
     ep = datetime.datetime(1970, 1, 1, 0, 0, 0)
     current_time = (datetime.datetime.utcnow() - ep).total_seconds()
 
-    slot_time = int(js1["start_time"])
+    slot_time = int(investminted["start_time"])
     slots = []
 
-    for i in js1["vesting_periods"]:
+    for i in investminted["vesting_periods"]:
         slot_time = int(i["length"]) + slot_time
         if slot_time > current_time:
             slots.extend(i["amount"])
@@ -285,13 +284,12 @@ def get_investminted_tokens(address: str, height=0):
 
     df["address"] = address
     df["state"] = "frozen"
-    df["height"] = height
 
     return df
 
 
 # %%
-def get_liquid(non_pool_df, investminted_df):
+def calculate_liquid(non_pool_df, investminted_df):
     liquid_df = pd.merge(
         non_pool_df,
         investminted_df,
@@ -349,38 +347,44 @@ def aggregate_totals(dfs_to_cocncat: list, prices_df):
             "amount",
             "amount_in_tocyb",
             "address",
-            "height",
         ]
     ]
 
     return total_df
 
 
+def concat_dfs_for_addresses(_func, addresses, height):
+
+    return pd.concat([_func(address, height) for address in addresses])
+
+
+def filter_non_pool(balance_df):
+
+    return balance_df.loc[~balance_df.index.str.startswith("pool")].reset_index()
+
+
 # %%
 def get_balances_on_height(height):
 
-    supply_bostrom_df = get_supply(height)
-    pools_df = get_pools(supply_bostrom_df, height)
+    addresses = ADDRESSES_DICT.keys()
+
+    pools_df = get_pools(height)
     prices_df = calculate_prices(pools_df)
-    delegated_df = pd.concat(
-        [get_delegations(address, height) for address in ADDRESSES_DICT.keys()]
-    )
-    rewards_all_df = pd.concat(
-        [get_rewards(address, height) for address in ADDRESSES_DICT.keys()]
-    )
-    rewards_pools_df = get_pool_rewards(rewards_all_df)
-    rewards_staking_df = get_staking_rewards(rewards_all_df)
-    balance_df = pd.concat(
-        [get_balance(address, height) for address in ADDRESSES_DICT.keys()]
-    )
-    non_pool_df = balance_df.loc[~balance_df.index.str.startswith("pool")].reset_index()
-    tokens_in_pools_df = calculate_owned_amount_of_tokens_in_pools(
+
+    balance_df = concat_dfs_for_addresses(get_balance, addresses, height)
+    delegated_df = concat_dfs_for_addresses(get_delegations, addresses, height)
+    rewards_all_df = concat_dfs_for_addresses(get_rewards, addresses, height)
+    investminted_df = concat_dfs_for_addresses(get_investminted, addresses, height)
+
+    rewards_pools_df = filter_pool_rewards(rewards_all_df)
+    rewards_staking_df = filter_stacking_rewards(rewards_all_df)
+
+    non_pool_df = filter_non_pool(balance_df)
+
+    tokens_in_pools_df = calculate_owned_amount_in_pools(
         balance_df, pools_df, rewards_pools_df
     )
-    investminted_df = pd.concat(
-        [get_investminted_tokens(address, height) for address in ADDRESSES_DICT.keys()]
-    )
-    liquid_df = get_liquid(non_pool_df, investminted_df)
+    liquid_df = calculate_liquid(non_pool_df, investminted_df)
 
     total_df = aggregate_totals(
         [
@@ -392,6 +396,8 @@ def get_balances_on_height(height):
         ],
         prices_df,
     )
+
+    total_df["height"] = height
 
     return total_df
 
