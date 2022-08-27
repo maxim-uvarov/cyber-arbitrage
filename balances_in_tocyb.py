@@ -1,5 +1,5 @@
 # %% [markdown]
-# # Bostrom balances in TOCYB
+# Bostrom balances in TOCYB
 # This notebook collects the amount of tokens that neurons (listed in the ADDRESSES_DICT)
 # owned in the Bostrom on the height (listed in a HEIGHT_LIST).
 # Tokens are divided by their state (liquid, delegated, investminted, rewards).
@@ -24,7 +24,6 @@ from config import IBC_COIN_NAMES
 from src.bash_utils import get_json_from_bash_query
 
 # %%
-
 ADDRESSES_DICT = {
     # "bostrom1nmr4flrrzrka3lanfwxklunsapr92fqq5rfrd3": "1",
     # "bostrom1dxpm2ne0jflzr2hy9j5has6u2dvfv68calunqy": "2",
@@ -39,6 +38,9 @@ TOKENS_TO_CONVERT = {
 }
 
 HEIGHT_LIST = []  # if empty amount of tokens for current height only will be returned
+# HEIGHT_LIST = [4369877 - (i * 14945 * 2) for i in range(0, 10)]
+# HEIGHT_LIST = [4369877]
+
 
 DEFAULT_CLI_PARAMS = (
     "--chain-id bostrom --node https://rpc.bostrom.cybernode.ai:443 -o json"
@@ -50,8 +52,12 @@ def rename_denom(denom: str, ibc_coin_names: dict = IBC_COIN_NAMES) -> str:
 
 
 _time_of_update = datetime.datetime.now()  # Time to mark all dfs
+testing_address = "bostrom1sgy27lctdrc5egpvc8f02rgzml6hmmvh5wu6xk"
+
 
 # %%
+
+
 def get_current_height():
     current_height = get_json_from_bash_query(
         f"cyber query block --chain-id bostrom --node https://rpc.bostrom.cybernode.ai:443"
@@ -63,7 +69,7 @@ def get_current_height():
 current_height = get_current_height()
 current_height
 
-# %%
+
 def get_supply(height=0):
     supply_bostrom_df = (
         pd.DataFrame.from_records(
@@ -79,7 +85,13 @@ def get_supply(height=0):
     return supply_bostrom_df
 
 
+supply_bostrom_df = get_supply(4369877)
+supply_bostrom_df
+
+
 # %%
+
+
 def get_pools(height=0):
 
     supply_bostrom_df = get_supply(height)
@@ -121,7 +133,12 @@ def get_pools(height=0):
     return pools_df
 
 
+pools_df = get_pools(4369877)
+pools_df
+
+
 # %%
+
 # here we calculate prices on tokens in H and TOCYB
 def calculate_prices(pools_df):
     df_temp = pools_df[["coin_1", "coin_1_amount", "coin_2", "coin_2_amount"]]
@@ -158,6 +175,9 @@ def calculate_prices(pools_df):
     return prices_df
 
 
+prices_df = calculate_prices(pools_df)
+prices_df
+
 # %%
 def get_delegations(address: str, height=0):
     delegations = pd.DataFrame.from_records(
@@ -168,7 +188,7 @@ def get_delegations(address: str, height=0):
     boots_delegated = (
         delegations["balance"].map(lambda x: x["amount"]).astype("int64").sum()
     )
-    row = pd.DataFrame(
+    delegated_df = pd.DataFrame(
         {
             "denom": ["boot"],
             "amount": [boots_delegated],
@@ -178,10 +198,15 @@ def get_delegations(address: str, height=0):
         }
     )
 
-    return row
+    return delegated_df
 
+
+delegated_df = get_delegations(testing_address)
+delegated_df
 
 # %%
+
+
 def get_rewards(address: str, height=0):
     rewards = get_json_from_bash_query(
         f"cyber query distribution rewards {address} {DEFAULT_CLI_PARAMS} --height {height}"
@@ -195,7 +220,13 @@ def get_rewards(address: str, height=0):
     return rewards_all_df
 
 
+rewards_all_df = get_rewards(testing_address, "4369877")
+rewards_all_df
+
+
 # %%
+
+
 def filter_pool_rewards(rewards_all_df):
 
     rewards_pools_df = rewards_all_df[
@@ -206,13 +237,22 @@ def filter_pool_rewards(rewards_all_df):
     return rewards_pools_df
 
 
+rewards_pools_df = filter_pool_rewards(rewards_all_df)
+rewards_pools_df
+
+
 # %%
 def filter_stacking_rewards(rewards_all_df):
-    rewards_staking_df = rewards_all_df[~rewards_all_df["denom"].str.startswith("pool")]
+    rewards_staking_df = rewards_all_df[
+        ~rewards_all_df["denom"].str.startswith("pool")
+    ].copy()
     rewards_staking_df["state"] = "rewards-staking"
 
     return rewards_staking_df
 
+
+rewards_staking_df = filter_stacking_rewards(rewards_all_df)
+rewards_staking_df
 
 # %%
 def get_balance(address: str, height=0):
@@ -227,11 +267,14 @@ def get_balance(address: str, height=0):
     return balance_df
 
 
-# %%
+balance_df = get_balance(testing_address, "4369877")
+balance_df
 
 # %%
+
+
 def calculate_owned_amount_in_pools(balance_df, pools_df, rewards_pools_df):
-    pool_tokens = balance_df.loc[balance_df.index.str.startswith("pool")]
+    pool_tokens = balance_df.loc[balance_df.index.str.startswith("pool")].copy()
     pool_tokens["state"] = "pool"
 
     pool_tokens = pd.concat([pool_tokens, rewards_pools_df])
@@ -259,7 +302,14 @@ def calculate_owned_amount_in_pools(balance_df, pools_df, rewards_pools_df):
     return tokens_in_pools_df
 
 
+tokens_in_pools_df = calculate_owned_amount_in_pools(
+    balance_df, pools_df, rewards_pools_df
+)
+tokens_in_pools_df
+
 # %%
+
+
 def get_investminted(address: str, height=0):
     investminted = get_json_from_bash_query(
         f"cyber query account {address} {DEFAULT_CLI_PARAMS} --height {height}"
@@ -276,36 +326,70 @@ def get_investminted(address: str, height=0):
         if slot_time > current_time:
             slots.extend(i["amount"])
 
-    df = pd.DataFrame(slots)
-    df["amount"] = df["amount"].astype("int64")
+    if len(slots) > 0:
+        investminted_df = pd.DataFrame(slots)
+        investminted_df["amount"] = investminted_df["amount"].astype("int64")
 
-    df = df.groupby("denom").sum()
-    df = df.reset_index()
+        investminted_df = investminted_df.groupby("denom").sum()
+        investminted_df = investminted_df.reset_index()
 
-    df["address"] = address
-    df["state"] = "frozen"
+        investminted_df["address"] = address
+        investminted_df["state"] = "frozen"
 
-    return df
+    else:
+        investminted_df = pd.DataFrame()
+        # investminted_df = pd.DataFrame(columns=["denom", "address"])
 
+    return investminted_df
+
+
+investminted_df = get_investminted(testing_address, "4369877")
+print(investminted_df)
+len(investminted_df)
 
 # %%
-def calculate_liquid(non_pool_df, investminted_df):
-    liquid_df = pd.merge(
-        non_pool_df,
-        investminted_df,
-        left_on=["denom", "address"],
-        right_on=["denom", "address"],
-        how="left",
-    ).fillna(0)
+def filter_non_pool(balance_df):
 
-    liquid_df["amount"] = liquid_df["amount_x"] - liquid_df["amount_y"]
-    liquid_df = liquid_df[["denom", "address", "amount"]]
+    non_pool_df = balance_df.loc[~balance_df.index.str.startswith("pool")].reset_index()
+
+    return non_pool_df
+
+
+non_pool_df = filter_non_pool(balance_df)
+non_pool_df
+
+# %%
+
+
+def calculate_liquid(non_pool_df, investminted_df):
+
+    if len(investminted_df) > 0:
+
+        liquid_df = pd.merge(
+            non_pool_df,
+            investminted_df,
+            left_on=["denom", "address"],
+            right_on=["denom", "address"],
+            how="left",
+        ).fillna(0)
+
+        liquid_df["amount"] = liquid_df["amount_x"] - liquid_df["amount_y"]
+    else:
+        liquid_df = non_pool_df
+
+    liquid_df = liquid_df[["denom", "address", "amount"]].copy()
     liquid_df["state"] = "liquid"
 
     return liquid_df
 
 
+liquid_df = calculate_liquid(non_pool_df, investminted_df)
+liquid_df
+
+
 # %%
+
+
 def aggregate_totals(dfs_to_cocncat: list, prices_df):
 
     total_df = pd.concat(dfs_to_cocncat)
@@ -353,14 +437,25 @@ def aggregate_totals(dfs_to_cocncat: list, prices_df):
     return total_df
 
 
+total_df = aggregate_totals(
+    [
+        tokens_in_pools_df,
+        liquid_df,
+        delegated_df,
+        investminted_df,
+        rewards_staking_df,
+    ],
+    prices_df,
+)
+
+total_df
+
+# %%
+
+
 def concat_dfs_for_addresses(_func, addresses, height):
 
     return pd.concat([_func(address, height) for address in addresses])
-
-
-def filter_non_pool(balance_df):
-
-    return balance_df.loc[~balance_df.index.str.startswith("pool")].reset_index()
 
 
 # %%
@@ -402,6 +497,9 @@ def get_balances_on_height(height):
     return total_df
 
 
+total_df = get_balances_on_height(4369877)
+total_df
+
 # %%
 def get_balances():
 
@@ -413,6 +511,7 @@ def get_balances():
 
 
 balances_df = get_balances()
+balances_df
 
 # %%
 # total_df.to_clipboard()
@@ -431,7 +530,6 @@ balances_df = get_balances()
 # )
 
 # %%
-
 from pivottablejs import pivot_ui
 
 pivot_ui(
@@ -442,5 +540,3 @@ pivot_ui(
     aggregatorName="Integer Sum",
     vals=["amount"],
 )
-
-# %%
